@@ -5,8 +5,8 @@ import pandas as pd
 from playwright.sync_api import sync_playwright
 
 def get_empire_flippers(min_p, max_p):
-    """Empire Flippers API: Still the most reliable source."""
-    print("Fetching Empire Flippers via API...")
+    """Empire Flippers API: High-stability source."""
+    print("Fetching Empire Flippers listings...")
     url = "https://api.empireflippers.com/api/v1/listings/list?limit=100"
     try:
         r = requests.get(url, timeout=10)
@@ -22,21 +22,20 @@ def get_empire_flippers(min_p, max_p):
         return []
 
 def scrape_with_playwright(min_p, max_p):
-    """Scrapes Flippa and Acquire with specific container targeting."""
+    """Scrapes Flippa with precision card targeting to avoid banners."""
     all_data = []
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         context = browser.new_context(user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
         page = context.new_page()
 
-        # --- TARGET 1: FLIPPA ---
-        print("Scraping Flippa (Precision Mode)...")
+        # Target 1: Flippa (Filtered for Europe and Price Range)
+        print("Scraping Flippa Listings...")
         flippa_url = f"https://www.flippa.com/search?filter%5Blocation%5D%5B%5D=Europe&filter%5Bprice%5D%5Bmin%5D={min_p}&filter%5Bprice%5D%5Bmax%5D={max_p}"
         page.goto(flippa_url, wait_until="networkidle")
         page.wait_for_timeout(5000) 
         
-        # We target the actual Search Result cards, not just any h3
-        # In 2026, Flippa uses specific classes for their listing grid
+        # Target only listing cards, ignoring marketing headers/banners
         listing_cards = page.query_selector_all("div[class*='ListingCard'], .search-result")
         
         for card in listing_cards:
@@ -45,8 +44,9 @@ def scrape_with_playwright(min_p, max_p):
             
             if title_element:
                 title_text = title_element.inner_text().strip()
-                # Ignore the "Premium" and "Promoted" ad text
-                if "Flippa Premium" in title_text or "Elevate Your" in title_text:
+                
+                # Filter out the marketing banner you saw in previous runs
+                if any(x in title_text for x in ["Flippa Premium", "Elevate Your", "Promoted"]):
                     continue
                 
                 link_url = link_element.get_attribute("href") if link_element else ""
@@ -59,41 +59,25 @@ def scrape_with_playwright(min_p, max_p):
                     "url": full_url
                 })
 
-        # --- TARGET 2: ACQUIRE.COM (JSON-LD Trick) ---
-        print("Scraping Acquire.com...")
-        page.goto("https://acquire.com/listings/", wait_until="networkidle")
-        scripts = page.query_selector_all("script[type='application/ld+json']")
-        for s in scripts:
-            try:
-                content = json.loads(s.inner_text())
-                if isinstance(content, dict) and content.get('@type') == 'Product':
-                    all_data.append({
-                        "source": "Acquire",
-                        "title": content.get('name'),
-                        "price": content.get('offers', {}).get('price'),
-                        "url": "https://acquire.com/listings/"
-                    })
-            except: continue
-
         browser.close()
     return all_data
 
 if __name__ == "__main__":
-    # Settings
+    # USER PREFERENCES: Price Range $1k - $100k
     MIN_PRICE = 1000
     MAX_PRICE = 100000
 
-    ef_results = get_empire_flippers(MIN_PRICE, MAX_PRICE)
-    web_results = scrape_with_playwright(MIN_PRICE, MAX_PRICE)
+    ef_data = get_empire_flippers(MIN_PRICE, MAX_PRICE)
+    web_data = scrape_with_playwright(MIN_PRICE, MAX_PRICE)
     
-    final_list = ef_results + web_results
+    final_list = ef_data + web_data
     
     if final_list:
         df = pd.DataFrame(final_list)
-        # Drop junk or duplicate rows
+        # Clean data: remove short non-business titles and duplicates
         df = df[df['title'].str.len() > 10]
         df = df.drop_duplicates(subset=['title'])
         df.to_csv("eu_businesses.csv", index=False)
-        print(f"Found {len(df)} real listings.")
+        print(f"Success! Found {len(df)} real listings.")
     else:
-        print("No results found.")
+        print("No real listings found. Check filters.")
