@@ -4,10 +4,9 @@ import time
 import requests
 import pandas as pd
 from playwright.sync_api import sync_playwright
-# UPDATED IMPORT FOR 2026
+# Using the v2.0+ class structure
 from playwright_stealth import Stealth
 
-# £1,000 - £100,000 ($1,250 - $125,000 USD)
 MIN_USD = 1250
 MAX_USD = 125000
 
@@ -25,10 +24,11 @@ def scrape_stealth(url, site_name, card_selector):
     print(f"Checking {site_name} in Stealth Mode...")
     results = []
     try:
-        # UPDATED: Using the new Stealth context manager pattern
+        # The 'Stealth().use_sync' pattern patches the browser context automatically
         with Stealth().use_sync(sync_playwright()) as p:
             browser = p.chromium.launch(headless=True)
             
+            # Use random real-world agents to avoid fingerprinting
             user_agents = [
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
                 "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
@@ -37,9 +37,8 @@ def scrape_stealth(url, site_name, card_selector):
             context = browser.new_context(user_agent=random.choice(user_agents))
             page = context.new_page()
             
-            # Stealth is now applied automatically to the context by 'use_sync'
             page.goto(url, wait_until="domcontentloaded", timeout=60000)
-            time.sleep(random.uniform(3, 6))
+            time.sleep(random.uniform(3, 7)) # Human behavior delay
             
             cards = page.query_selector_all(card_selector)
             for card in cards:
@@ -64,27 +63,22 @@ def scrape_stealth(url, site_name, card_selector):
     return results
 
 if __name__ == "__main__":
-    # 1. Empire Flippers
+    # Aggregating all data
     data = get_empire_flippers()
-    
-    # 2. Microns.io (Public Explore Page)
     data += scrape_stealth("https://www.microns.io/explore", "Microns.io", ".card")
     
-    # 3. Flippa
     flippa_url = f"https://www.flippa.com/search?filter%5Bprice%5D%5Bmin%5D={MIN_USD}&filter%5Bprice%5D%5Bmax%5D={MAX_USD}&filter%5Bstatus%5D=open&filter%5Bproperty_type%5D=website%2Csaas"
     data += scrape_stealth(flippa_url, "Flippa", "div[class*='ListingCard']")
     
-    # 4. SideProjectors
     data += scrape_stealth("https://www.sideprojectors.com/project/search?is_for_sale=true", "SideProjectors", ".project-item")
 
     if data:
         df = pd.DataFrame(data).drop_duplicates(subset=['url'])
-        # Clean price for sorting
+        # Sort so the £1,000 (lowest price) assets are first
         df['p_val'] = df['price'].replace('[\$,]', '', regex=True).astype(float, errors='ignore')
-        # Sort so the £1,000 listings are at the top
         df = df.sort_values(by='p_val', ascending=True).drop(columns=['p_val'])
         
         df.to_csv("eu_businesses.csv", index=False)
-        print(f"Success! {len(df)} digital assets cooked.")
+        print(f"Successfully processed {len(df)} available digital assets.")
     else:
-        print("Nothing found today.")
+        print("No matches found today.")
