@@ -1,100 +1,90 @@
 import os
+import random
+import time
 import requests
 import pandas as pd
 from playwright.sync_api import sync_playwright
+from playwright_stealth import stealth_async, stealth_sync
 
-# QUALITY SETTINGS
+# £1,000 - £100,000 ($1,250 - $125,000 USD)
 MIN_USD = 1250
 MAX_USD = 125000
-MIN_MONTHLY_PROFIT = 200  # Filters out "Starter" sites with $0 income
-MIN_AGE_YEARS = 1         # Filters out brand new "flip" sites
-
-def is_desirable(title, price_str):
-    """Filter out known garbage keywords and low-value starters."""
-    garbage = ["starter", "newly built", "potential", "package", "turnkey", "ready to", "clone"]
-    title_lower = title.lower()
-    
-    # 1. Kill 'potential' plays. We want cash flow, not 'potential'.
-    if any(word in title_lower for word in garbage):
-        return False
-    
-    # 2. Basic Price Check (Ensure it's not a $1 lead magnet)
-    try:
-        price = int(price_str.replace('$', '').replace(',', '').strip())
-        if price < MIN_USD: return False
-    except:
-        return False
-        
-    return True
 
 def get_empire_flippers():
-    """Empire Flippers is already vetted, but we narrow it further."""
-    print("Fetching Vetted Empire Flippers Listings...")
-    # Only pull established monetizations
-    monetizations = "SaaS||Subscription||eCommerce||Info%20Product"
-    url = f"https://api.empireflippers.com/api/v1/listings/list?limit=50&listing_price_from={MIN_USD}&listing_price_to={MAX_USD}&monetizations={monetizations}"
+    """Empire Flippers: API is public and safe."""
+    print("Checking Empire Flippers...")
+    monet = "SaaS||Subscription||eCommerce||Content"
+    url = f"https://api.empireflippers.com/api/v1/listings/list?limit=50&listing_price_from={MIN_USD}&listing_price_to={MAX_USD}&monetizations={monet}"
     try:
-        r = requests.get(url, timeout=15)
-        listings = r.json().get('data', {}).get('listings', [])
-        # EF vetting: We only take listings with at least 12 months of data
-        return [{
-            "source": "EmpireFlippers (Vetted)",
-            "title": f"{item.get('business_niche')} - {item.get('monetization_keyword')}",
-            "price": f"${item['listing_price']:,}",
-            "yield": f"${item.get('average_monthly_net_profit', 0):,}/mo",
-            "url": f"https://empireflippers.com/listing/{item['listing_number']}"
-        } for item in listings if item.get('average_monthly_net_profit', 0) >= MIN_MONTHLY_PROFIT]
-    except:
-        return []
+        r = requests.get(url, timeout=10)
+        data = r.json().get('data', {}).get('listings', [])
+        return [{"source": "EmpireFlippers", "title": f"{item.get('business_niche')}", "price": f"${item['listing_price']:,}", "url": f"https://empireflippers.com/listing/{item['listing_number']}"} for item in data]
+    except: return []
 
-def scrape_flippa():
-    """Flippa: The 'Wild West'. We need the strictest filters here."""
-    print("Scraping Flippa (Strict Filter)...")
+def scrape_stealth(url, site_name, card_selector):
+    """Universal Stealth Scraper to avoid IP bans."""
     results = []
     try:
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
-            page = browser.new_page()
-            # SEARCH FOR: Established + Verified Revenue only
-            url = f"https://www.flippa.com/search?filter%5Bprice%5D%5Bmin%5D={MIN_USD}&filter%5Bprice%5D%5Bmax%5D={MAX_USD}&filter%5Bproperty_type%5D=website%2Csaas%2Cios_app&filter%5Brevenue_is_verified%5D=1&filter%5Bstatus%5D=open&sort%5Bfield%5D=revenue&sort%5Border%5D=desc"
-            page.goto(url, wait_until="domcontentloaded", timeout=60000)
-            page.wait_for_timeout(5000)
+            # Use a random real-world User Agent
+            user_agents = [
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
+            ]
+            context = browser.new_context(user_agent=random.choice(user_agents))
+            page = context.new_page()
             
-            cards = page.query_selector_all("div[class*='ListingCard']")
+            # 1. APPLY STEALTH
+            stealth_sync(page)
+            
+            # 2. NAVIGATE & WAIT
+            page.goto(url, wait_until="domcontentloaded", timeout=60000)
+            time.sleep(random.uniform(3, 7)) # Human delay
+            
+            # 3. HUMAN SCROLL
+            page.mouse.wheel(0, 400)
+            
+            cards = page.query_selector_all(card_selector)
             for card in cards:
-                title_ele = card.query_selector("h3")
-                price_ele = card.query_selector("span:has-text('$')")
+                # SKIP SOLD
+                if "Sold" in card.inner_text(): continue
+                
+                title_ele = card.query_selector("h3, h4")
+                price_ele = card.query_selector("span:has-text('$'), div:has-text('$')")
                 link_ele = card.query_selector("a")
                 
-                # Check for "Net Profit" label often visible on cards
-                profit_ele = card.query_selector("div:has-text('net profit')")
-                
                 if title_ele and price_ele and link_ele:
-                    title = title_ele.inner_text().strip()
-                    price = price_ele.inner_text().strip()
-                    url_link = f"https://flippa.com{link_ele.get_attribute('href')}"
-                    
-                    if is_desirable(title, price):
-                        results.append({
-                            "source": "Flippa (Verified)",
-                            "title": title,
-                            "price": price,
-                            "yield": profit_ele.inner_text().strip() if profit_ele else "Check Site",
-                            "url": url_link
-                        })
+                    results.append({
+                        "source": site_name,
+                        "title": title_ele.inner_text().strip(),
+                        "price": price_ele.inner_text().strip(),
+                        "url": link_ele.get_attribute("href") if link_ele.get_attribute("href").startswith("http") else f"{url.split('.com')[0]}.com{link_ele.get_attribute('href')}"
+                    })
             browser.close()
-    except Exception as e: print(f"Flippa Error: {e}")
+    except Exception as e:
+        print(f"Error on {site_name}: {e}")
     return results
 
 if __name__ == "__main__":
-    # Combine sources
-    listings = get_empire_flippers() + scrape_flippa()
+    # 1. Empire Flippers (API)
+    data = get_empire_flippers()
     
-    if listings:
-        df = pd.DataFrame(listings)
-        # Drop any remaining junk
-        df = df[~df['title'].str.contains("Starter|Template|Package", case=False)]
+    # 2. Microns.io (Micro-SaaS focused)
+    data += scrape_stealth("https://www.microns.io/explore", "Microns.io", ".card")
+    
+    # 3. Flippa (Broad Digital)
+    flippa_url = f"https://www.flippa.com/search?filter%5Bprice%5D%5Bmin%5D={MIN_USD}&filter%5Bprice%5D%5Bmax%5D={MAX_USD}&filter%5Bstatus%5D=open&filter%5Bproperty_type%5D=website%2Csaas"
+    data += scrape_stealth(flippa_url, "Flippa", "div[class*='ListingCard']")
+    
+    # 4. SideProjectors (Indie Projects)
+    data += scrape_stealth("https://www.sideprojectors.com/project/search?is_for_sale=true", "SideProjectors", ".project-item")
+
+    if data:
+        df = pd.DataFrame(data).drop_duplicates(subset=['url'])
+        # Sort by price to show £1,000 listings at the top
+        df['p_val'] = df['price'].replace('[\$,]', '', regex=True).astype(float, errors='ignore')
+        df = df.sort_values(by='p_val', ascending=True).drop(columns=['p_val'])
+        
         df.to_csv("eu_businesses.csv", index=False)
-        print(f"✅ Filtered down to {len(df)} desirable digital assets.")
-    else:
-        print("❌ No high-quality matches found today.")
+        print(f"Success! {len(df)} available digital assets found.")
