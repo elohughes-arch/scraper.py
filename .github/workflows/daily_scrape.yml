@@ -33,6 +33,7 @@ jobs:
           git config --global user.name "GitHub Action"
           git config --global user.email "action@github.com"
           git add eu_businesses.csv
+          # This commit happens FIRST so the rebase works
           git commit -m "Update listings" || exit 0
           git pull --rebase origin main
           git push origin main
